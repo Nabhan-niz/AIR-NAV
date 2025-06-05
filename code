@@ -1,0 +1,162 @@
+import cv2
+import mediapipe as mp
+import pyautogui
+import numpy as np
+import math
+import time
+import threading
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+from comtypes import CLSCTX_ALL, cast, POINTER
+import win32gui  
+
+# ✅ Faster Video Capture
+class VideoCaptureAsync:
+    def _init_(self, src=0):
+        self.cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.running = True
+        self.frame = None
+        self.thread = threading.Thread(target=self._update, args=())
+
+    def start(self):
+        self.thread.start()
+        return self
+
+    def _update(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            if ret:
+                self.frame = cv2.flip(frame, 1)
+
+    def read(self):
+        return self.frame
+
+    def stop(self):
+        self.running = False
+        self.thread.join()
+        self.cap.release()
+
+# ✅ Check if PowerPoint is Active
+def is_ppt_active():
+    try:
+        window = win32gui.GetForegroundWindow()
+        title = win32gui.GetWindowText(window).lower()
+        return "powerpoint" in title or "slide show" in title
+    except:
+        return False
+
+# ✅ Helper Function
+def distance(p1, p2):
+    return np.linalg.norm(np.array(p1) - np.array(p2))
+
+# ✅ Initialize MediaPipe Hands
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.7, min_tracking_confidence=0.7)
+
+# ✅ Initialize Pycaw for Volume Control
+devices = AudioUtilities.GetSpeakers()
+interface = devices.Activate(IAudioEndpointVolume.iid, CLSCTX_ALL, None)
+volume = cast(interface, POINTER(IAudioEndpointVolume))
+min_vol, max_vol = volume.GetVolumeRange()[0], volume.GetVolumeRange()[1]
+
+# ✅ Start Video Capture
+cap = VideoCaptureAsync(0).start()
+
+# ✅ Screen settings
+screen_w, screen_h = pyautogui.size()
+smoothing_factor = 0.2
+prev_x, prev_y = 0, 0
+dragging = False
+last_click_time = 0
+volume_mode = False
+last_toggle_time = 0
+last_ppt_gesture_time = 0
+
+while True:
+    frame = cap.read()
+    if frame is None:
+        continue
+    
+    h, w, _ = frame.shape
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = hands.process(rgb_frame)
+
+    ppt_active = is_ppt_active()
+    current_time = time.time()
+
+    if result.multi_hand_landmarks:
+        for hand_landmarks in result.multi_hand_landmarks:
+            landmarks = hand_landmarks.landmark
+            index_tip, thumb_tip = landmarks[8], landmarks[4]
+            middle_tip, ring_tip, pinky_tip = landmarks[12], landmarks[16], landmarks[20]
+            index_dip = landmarks[6]  # Index finger second joint
+
+            # ✅ PowerPoint Control
+            if ppt_active and current_time - last_ppt_gesture_time > 1:
+                if thumb_tip.y < index_tip.y < middle_tip.y:
+                    pyautogui.press('right')
+                    last_ppt_gesture_time = current_time
+                elif index_tip.y > middle_tip.y > ring_tip.y:
+                    pyautogui.press('left')
+                    last_ppt_gesture_time = current_time
+
+            # ✅ Activation Gesture for Volume Mode (Shaka Gesture 🤙)
+            if distance((thumb_tip.x, thumb_tip.y), (pinky_tip.x, pinky_tip.y)) < 0.05 and \
+               index_tip.y < middle_tip.y < ring_tip.y:
+                if current_time - last_toggle_time > 1:
+                    volume_mode = not volume_mode
+                    last_toggle_time = current_time
+                    if not volume_mode:
+                        time.sleep(0.5)
+                continue  
+
+            # ✅ Volume Control
+            if volume_mode:
+                x1, y1 = int(thumb_tip.x * w), int(thumb_tip.y * h)
+                x2, y2 = int(index_tip.x * w), int(index_tip.y * h)
+                length = math.hypot(x2 - x1, y2 - y1)
+                vol = np.interp(length, [30, 200], [min_vol, max_vol])
+                volume.SetMasterVolumeLevel(vol, None)
+                continue  
+
+            # ✅ Mouse Movement (Smooth & Precise)
+            screen_x = int(index_tip.x * screen_w)
+            screen_y = int(index_tip.y * screen_h)
+            screen_x = int(prev_x * (1 - smoothing_factor) + screen_x * smoothing_factor)
+            screen_y = int(prev_y * (1 - smoothing_factor) + screen_y * smoothing_factor)
+
+            if abs(screen_x - prev_x) > 5 or abs(screen_y - prev_y) > 5:
+                pyautogui.moveTo(screen_x, screen_y)
+            prev_x, prev_y = screen_x, screen_y
+
+            # ✅ Left Click
+            if distance((index_tip.x, index_tip.y), (thumb_tip.x, thumb_tip.y)) < 0.05:
+                if current_time - last_click_time > 0.5:
+                    pyautogui.click()
+                    last_click_time = current_time
+
+            # ✅ *Fixed Dragging (Thumbs-Up) vs Right Click Issue*
+            index_middle_dist = distance((index_tip.x, index_tip.y), (middle_tip.x, middle_tip.y))
+            thumb_index_dist = distance((thumb_tip.x, thumb_tip.y), (index_dip.x, index_dip.y))
+            thumb_up = thumb_tip.y < index_dip.y  # *Thumb is up if above index dip*
+
+            if index_middle_dist < 0.04:  # *Right Click*
+                if current_time - last_click_time > 0.5:
+                    pyautogui.rightClick()
+                    last_click_time = current_time
+            elif thumb_up and thumb_index_dist > 0.05:  # *Dragging with Thumbs-Up*
+                if not dragging:
+                    pyautogui.mouseDown()
+                    dragging = True
+            else:
+                if dragging:
+                    pyautogui.mouseUp()
+                    dragging = False
+
+    cv2.imshow("Hand Gesture Control", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.stop()
+cv2.destroyAllWindows()
