@@ -101,7 +101,7 @@ while True:
                     pyautogui.press('left')
                     last_ppt_gesture_time = current_time
 
-            # ✅ Activation Gesture for Volume Mode (Shaka Gesture 🤙)
+            # ✅ Activation Gesture for Volume Mode
             if distance((thumb_tip.x, thumb_tip.y), (pinky_tip.x, pinky_tip.y)) < 0.05 and \
                index_tip.y < middle_tip.y < ring_tip.y:
                 if current_time - last_toggle_time > 1:
@@ -120,7 +120,7 @@ while True:
                 volume.SetMasterVolumeLevel(vol, None)
                 continue  
 
-            # ✅ Mouse Movement (Smooth & Precise)
+            # ✅ Mouse Movement
             screen_x = int(index_tip.x * screen_w)
             screen_y = int(index_tip.y * screen_h)
             screen_x = int(prev_x * (1 - smoothing_factor) + screen_x * smoothing_factor)
@@ -136,7 +136,7 @@ while True:
                     pyautogui.click()
                     last_click_time = current_time
 
-            # ✅ *Fixed Dragging (Thumbs-Up) vs Right Click Issue*
+    
             index_middle_dist = distance((index_tip.x, index_tip.y), (middle_tip.x, middle_tip.y))
             thumb_index_dist = distance((thumb_tip.x, thumb_tip.y), (index_dip.x, index_dip.y))
             thumb_up = thumb_tip.y < index_dip.y  # *Thumb is up if above index dip*
